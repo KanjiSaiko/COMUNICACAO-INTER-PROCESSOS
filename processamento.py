@@ -21,24 +21,23 @@ def processamento_server(sock, num_reqs, somatorio, IP_HOST, SERVIDOR_PORTA, dat
             id_req, data = message.split(":", 1)
             valor = struct.unpack('!i', data)[0]
             
-            if (addr not in  cliente) :
-                cliente[addr] = id_req
-
-            elif(addr in cliente and cliente[addr] == id_req):
+            if(addr in cliente and cliente[addr] == id_req): #DUPLICADA
                 print(f"{date} client {addr} DUP!! id_req {id_req} value {valor} num_reqs {num_reqs} total_sum {somatorio}")
-                
-            num_reqs += 1
-            somatorio += valor
+            else:
+                if (addr not in  cliente) : #CASO IP NAO ESTEJA NA TABELA
+                    cliente[addr] = id_req 
+                num_reqs += 1
+                somatorio += valor
 
-            cliente[addr] = {'last_sum' : somatorio}
-            soma_server = {'num_reqs' : num_reqs, 'total_sum' : somatorio}
+                cliente[addr] = {'last_sum' : somatorio}
+                soma_server = {'num_reqs' : num_reqs, 'total_sum' : somatorio}
 
-            salvaCSV(cliente, soma_server)
+                salvaCSV(cliente, soma_server)
 
-            interface.interface_server(date, addr, id_req, valor, num_reqs, somatorio)
+                interface.interface_server(date, addr, id_req, valor, num_reqs, somatorio)
 
-            envio_somatorio = struct.pack('!iii', id_req, num_reqs, somatorio) #envia os valores para o cliente
-            sock.sendto(envio_somatorio, (IP_HOST, SERVIDOR_PORTA))
+                envio_somatorio = struct.pack('!iii', id_req, num_reqs, somatorio) #envia os valores para o cliente
+                sock.sendto(envio_somatorio, (IP_HOST, SERVIDOR_PORTA))
 
         except socket.error:
             print(f"Recebido dado nao numerico: {data}")
