@@ -19,12 +19,10 @@ def main():
         print("Nenhuma porta fornecida")
         sys.exit()
     
-    
-
     #criacao do socket
-    sock_client, IP_HOST = dsc.descoberta(SERVIDOR_PORTA)
+    sock_client = dsc.descoberta_server(SERVIDOR_PORTA)
 
     print(f"{date} num_reqs {num_reqs} total_sum {somatorio}")
 
     #processa requisicoes
-    pss.processamento_server(sock_client, num_reqs, somatorio, IP_HOST, SERVIDOR_PORTA, date)        
+    pss.processamento_server(sock_client, num_reqs, somatorio, date)        

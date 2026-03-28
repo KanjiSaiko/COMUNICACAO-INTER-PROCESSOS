@@ -1,10 +1,8 @@
 import socket
 import sys
-import struct
 import datetime as dt
 import processamento as pss
-
-BROADCAST = '255.255.255.255'
+import descoberta as dsc
 
 def main():
     req = 0
@@ -15,11 +13,7 @@ def main():
         sys.exit()
 
     #DESCOBERTA ATRAVES DE BROADCAST
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) #udp
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1) #ativa broadcast
-    sock.sendto(b"discover", (BROADCAST, CLIENTE_PORTA))
-
-    CLIENTE_IP = sock.recvfrom(1024)[1][0]
+    sock, CLIENTE_IP = dsc.descoberta_cliente(CLIENTE_PORTA)
 
 
     date = dt.datetime.now()

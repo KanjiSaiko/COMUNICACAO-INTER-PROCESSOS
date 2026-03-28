@@ -1,65 +1,78 @@
 import socket
 import struct
 import sys
-import pandas as pd
 import interface
 
-def salvaCSV(cliente, soma_server):
-    table1 = pd.DataFrame(cliente)
-    table2 = pd.DataFrame(soma_server)
-
-    table1.to_csv('table1.csv', index=False, encoding='utf-8-sig')
-    table2.to_csv('table2.csv', index=False, encoding='utf-8-sig')
-
-def processamento_server(sock, num_reqs, somatorio, IP_HOST, SERVIDOR_PORTA, date):
-    #estrutura: {(address : req), (last_sum : somatorio)}
-    cliente = {}
-    soma_server = {'num_reqs', 'total_sum'}
+def processamento_server(sock, num_reqs, somatorio, date):
+    #estrutura: {'address' : address, 'last_req': id_req, 'last_num_reqs' : last_num_reqs, 'last_sum': somatorio}
+    tabela_1 = {} 
+    tabela_2 = {'num_reqs' : 0, 'total_sum' : 0}
+    i = 0
     while (True):
         try:
             message, addr = sock.recvfrom(1024)
-            id_req, data = message.split(":", 1)
-            valor = struct.unpack('!i', data)[0]
+            ip_client = addr[0]
+            id_req, data = struct.unpack('!iQ', message)
             
-            if(addr in cliente and cliente[addr] == id_req): #DUPLICADA
-                print(f"{date} client {addr} DUP!! id_req {id_req} value {valor} num_reqs {num_reqs} total_sum {somatorio}")
+            if(ip_client in tabela_1 and tabela_1[ip_client]['last_req'] == id_req): #DUPLICADA
+                print(f"{date} client {addr} DUP!! id_req {id_req} value {data} num_reqs {num_reqs} total_sum {somatorio}")
+                envio_somatorio = tabela_1[ip_client]['last_sum']
+                
+                sock.sendto(struct.pack('!Q', envio_somatorio), addr)
+
             else:
-                if (addr not in  cliente) : #CASO IP NAO ESTEJA NA TABELA
-                    cliente[addr] = id_req 
+                if (ip_client not in  tabela_1) : #CASO IP NAO ESTEJA NA TABELA
+                    tabela_1[ip_client] = {
+                        'address': ip_client,
+                        'last_req': None,
+                        'last_num_reqs': 0,
+                        'last_sum': 0
+                    }
+
                 num_reqs += 1
-                somatorio += valor
+                somatorio += data
 
-                cliente[addr] = {'last_sum' : somatorio}
-                soma_server = {'num_reqs' : num_reqs, 'total_sum' : somatorio}
+                tabela_1[ip_client]['last_req'] = id_req
+                tabela_1[ip_client]['last_num_reqs'] = num_reqs
+                tabela_1[ip_client]['last_sum'] = somatorio
 
-                salvaCSV(cliente, soma_server)
 
-                interface.interface_server(date, addr, id_req, valor, num_reqs, somatorio)
+                tabela_2 = {'num_reqs' : num_reqs, 'total_sum' : somatorio}
 
-                envio_somatorio = struct.pack('!iii', id_req, num_reqs, somatorio) #envia os valores para o cliente
-                sock.sendto(envio_somatorio, (IP_HOST, SERVIDOR_PORTA))
+                interface.interface_server(date, ip_client, id_req, data, tabela_2)
 
+                envio_somatorio = struct.pack('!iiQ', id_req, num_reqs, somatorio) #envia os valores para o cliente
+                sock.sendto(envio_somatorio, addr)
+    
         except socket.error:
             print(f"Recebido dado nao numerico: {data}")
-            sys.exit()
+            continue
 
 
 def processamento_cliente(sock, CLIENTE_IP, CLIENTE_PORTA, date):
     req = 0
     while(True):
         numero = int(input())
-        envio_int = struct.pack('!i', numero)
         req += 1
-        mensagem = f'{req}:{envio_int}'
-        try:
+        mensagem = struct.pack('!iQ', req, numero)
+        while(True):
             sock.sendto(mensagem, (CLIENTE_IP, CLIENTE_PORTA)) #envia numero
+            try:
+                sock.settimeout(0.2) #timeout para esperar um ack ate 200ms
 
-            data, addr = sock.recvfrom(1024) #recebe somatorio
-            id_req, num_reqs, somatorio = struct.unpack('!iii', data)
-            
-            if somatorio:
-                interface.interface_cliente(date, addr, id_req, numero, num_reqs, somatorio)
-        except:
-            print("Timer estourou")
-            sys.exit()
+                #aguarda confirmacao
+                data, addr = sock.recvfrom(1024) #recebe os dados
+                ip_server = addr[0]
+                id_req, num_reqs, somatorio = struct.unpack('!iiQ', data) #desempacota
+
+                if (req == id_req):
+                    break
+
+            except socket.timeout:
+                print("Timeout. Reenviando...")
+                continue
+        
+        if somatorio:
+            interface.interface_cliente(date, ip_server, id_req, numero, num_reqs, somatorio)
+        
 
