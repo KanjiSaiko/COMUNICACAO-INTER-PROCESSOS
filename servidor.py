@@ -2,14 +2,12 @@ import sys
 import datetime as dt
 import processamento as pss
 import descoberta as dsc
-import socket
 
 def main():
 
     #estrutura de dados da soma agregada mantida pelo servidor
     num_reqs = 0 #numero de requiscoes totais
     somatorio = 0
-    id_req = 0 #id da req atual do cliente
     date = dt.datetime.now()
 
     if len(sys.argv) > 1: 

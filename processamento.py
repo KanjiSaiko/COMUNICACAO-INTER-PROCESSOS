@@ -1,7 +1,7 @@
 import socket
 import struct
-import sys
 import interface
+import threading
 
 def processamento_server(sock, num_reqs, somatorio, date):
     #estrutura: {'address' : address, 'last_req': id_req, 'last_num_reqs' : last_num_reqs, 'last_sum': somatorio}
@@ -18,7 +18,7 @@ def processamento_server(sock, num_reqs, somatorio, date):
                 print(f"{date} client {addr} DUP!! id_req {id_req} value {data} num_reqs {num_reqs} total_sum {somatorio}")
                 envio_somatorio = tabela_1[ip_client]['last_sum']
                 
-                sock.sendto(struct.pack('!Q', envio_somatorio), addr)
+                sock.sendto(struct.pack('!iiQ', id_req, num_reqs, envio_somatorio), addr)
 
             else:
                 if (ip_client not in  tabela_1) : #CASO IP NAO ESTEJA NA TABELA

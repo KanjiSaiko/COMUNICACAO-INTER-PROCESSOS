@@ -1,4 +1,3 @@
-import socket
 import sys
 import datetime as dt
 import processamento as pss
@@ -19,4 +18,4 @@ def main():
     date = dt.datetime.now()
     print(f"{date.strftime('%Y-%m-%d %H:%M:%S')} server addr {CLIENTE_IP}")
 
-    pss.processamento_cliente(req, sock, CLIENTE_IP, CLIENTE_PORTA, date)
+    pss.processamento_cliente(sock, CLIENTE_IP, CLIENTE_PORTA, date)
