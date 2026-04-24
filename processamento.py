@@ -7,7 +7,6 @@ def processamento_server(sock, num_reqs, somatorio, date):
     #estrutura: {'address' : address, 'last_req': id_req, 'last_num_reqs' : last_num_reqs, 'last_sum': somatorio}
     tabela_1 = {} 
     tabela_2 = {'num_reqs' : 0, 'total_sum' : 0}
-    i = 0
     while (True):
         try:
             message, addr = sock.recvfrom(1024)
