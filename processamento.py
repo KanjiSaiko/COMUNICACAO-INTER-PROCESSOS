@@ -51,28 +51,44 @@ def processamento_server(sock, num_reqs, somatorio, date):
 
 def processamento_cliente(sock, CLIENTE_IP, CLIENTE_PORTA, date):
     req = 0
+    evento = threading.Event() 
+
+    estado_atual = {'req_esperado': 0, 'numero_enviado': 0} #estrutura mutável compartilhada
+
+    thread_ouvinte = threading.Thread(
+        target=ouvinte_servidor, 
+        args=(sock, estado_atual, date, evento),
+        daemon=True) # Garante que a thread morra se o programa fechar)
+    thread_ouvinte.start()
+
     while(True):
         numero = int(input())
         req += 1
+
+        estado_atual['req_esperado'] = req
+        estado_atual['numero_enviado'] = numero
+
         mensagem = struct.pack('!iQ', req, numero)
         while(True):
-            sock.sendto(mensagem, (CLIENTE_IP, CLIENTE_PORTA)) #envia numero
-            try:
-                sock.settimeout(0.2) #timeout para esperar um ack ate 200ms
-
-                #aguarda confirmacao
-                data, addr = sock.recvfrom(1024) #recebe os dados
-                ip_server = addr[0]
-                id_req, num_reqs, somatorio = struct.unpack('!iiQ', data) #desempacota
-
-                if (req == id_req):
-                    break
-
-            except socket.timeout:
-                print("Timeout. Reenviando...")
-                continue
+            evento.clear() #garante/apaga flag ACK
+            sock.sendto(mensagem, (CLIENTE_IP, CLIENTE_PORTA)) #envia numero    
         
-        if somatorio:
-            interface.interface_cliente(date, ip_server, id_req, numero, num_reqs, somatorio)
-        
+            if evento.wait(0.2):
+                break #Sucesso
 
+            else:
+                print("Timeout") #Falha, loop repete
+
+
+
+def ouvinte_servidor(sock, estado_atual, date, evento):
+    while(True):
+            #aguarda confirmacao
+            data, addr = sock.recvfrom(1024) #recebe os dados
+            ip_server = addr[0]
+            id_req, num_reqs, somatorio = struct.unpack('!iiQ', data) #desempacota
+ 
+            #Lê do estado compartilhado para saber o que a thread principal está esperando
+            if (estado_atual['req_esperado'] == id_req):
+                interface.interface_cliente(date, ip_server, id_req, estado_atual['numero_enviado'], num_reqs, somatorio)
+                evento.set() #acende flag avisando que ACK da req chegou
