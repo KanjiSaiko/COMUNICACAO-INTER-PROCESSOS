@@ -19,3 +19,7 @@ def main():
     print(f"{date.strftime('%Y-%m-%d %H:%M:%S')} server addr {CLIENTE_IP}")
 
     pss.processamento_cliente(sock, CLIENTE_IP, CLIENTE_PORTA, date)
+
+
+if __name__ == "__main__":
+    main()

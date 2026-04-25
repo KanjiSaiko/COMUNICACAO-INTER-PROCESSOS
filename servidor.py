@@ -20,7 +20,11 @@ def main():
     #criacao do socket
     sock_client = dsc.descoberta_server(SERVIDOR_PORTA)
 
-    print(f"{date} num_reqs {num_reqs} total_sum {somatorio}")
+    print(f"{date.strftime('%Y-%m-%d %H:%M:%S')} num_reqs {num_reqs} total_sum {somatorio}")
 
     #processa requisicoes
-    pss.processamento_server(sock_client, num_reqs, somatorio, date)        
+    pss.processamento_server(sock_client, num_reqs, somatorio, date)      
+
+
+if __name__ == "__main__":
+    main()  

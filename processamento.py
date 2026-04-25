@@ -11,37 +11,46 @@ def processamento_server(sock, num_reqs, somatorio, date):
         try:
             message, addr = sock.recvfrom(1024)
             ip_client = addr[0]
-            id_req, data = struct.unpack('!iQ', message)
+
+            # 1. É um cliente novo pedindo descoberta? (Checa se é a string de 8 bytes)
+            if message == b"discover":
+                sock.sendto(b"ack_discover", addr)
+                # Pode aproveitar e já criar a entrada dele na tabela_1 aqui, se quiser!
+                continue # Volta para o topo do loop para escutar a próxima mensagem
+
+            # 2. É um pacote de dados? (Checa se tem o tamanho exato do struct !iQ)
+            elif len(message) == 12:
+                id_req, data = struct.unpack('!iQ', message)
             
-            if(ip_client in tabela_1 and tabela_1[ip_client]['last_req'] == id_req): #DUPLICADA
-                print(f"{date} client {addr} DUP!! id_req {id_req} value {data} num_reqs {num_reqs} total_sum {somatorio}")
-                envio_somatorio = tabela_1[ip_client]['last_sum']
-                
-                sock.sendto(struct.pack('!iiQ', id_req, num_reqs, envio_somatorio), addr)
+                if(ip_client in tabela_1 and tabela_1[ip_client]['last_req'] == id_req): #DUPLICADA
+                    print(f"{date} client {addr} DUP!! id_req {id_req} value {data} num_reqs {num_reqs} total_sum {somatorio}")
+                    envio_somatorio = tabela_1[ip_client]['last_sum']
+                    
+                    sock.sendto(struct.pack('!iiQ', id_req, num_reqs, envio_somatorio), addr)
 
-            else:
-                if (ip_client not in  tabela_1) : #CASO IP NAO ESTEJA NA TABELA
-                    tabela_1[ip_client] = {
-                        'address': ip_client,
-                        'last_req': None,
-                        'last_num_reqs': 0,
-                        'last_sum': 0
-                    }
+                else:
+                    if (ip_client not in  tabela_1) : #CASO IP NAO ESTEJA NA TABELA
+                        tabela_1[ip_client] = {
+                            'address': ip_client,
+                            'last_req': None,
+                            'last_num_reqs': 0,
+                            'last_sum': 0
+                        }
 
-                num_reqs += 1
-                somatorio += data
+                    num_reqs += 1
+                    somatorio += data
 
-                tabela_1[ip_client]['last_req'] = id_req
-                tabela_1[ip_client]['last_num_reqs'] = num_reqs
-                tabela_1[ip_client]['last_sum'] = somatorio
+                    tabela_1[ip_client]['last_req'] = id_req
+                    tabela_1[ip_client]['last_num_reqs'] = num_reqs
+                    tabela_1[ip_client]['last_sum'] = somatorio
 
 
-                tabela_2 = {'num_reqs' : num_reqs, 'total_sum' : somatorio}
+                    tabela_2 = {'num_reqs' : num_reqs, 'total_sum' : somatorio}
 
-                interface.interface_server(date, ip_client, id_req, data, tabela_2)
+                    interface.interface_server(date, ip_client, id_req, data, tabela_2)
 
-                envio_somatorio = struct.pack('!iiQ', id_req, num_reqs, somatorio) #envia os valores para o cliente
-                sock.sendto(envio_somatorio, addr)
+                    envio_somatorio = struct.pack('!iiQ', id_req, num_reqs, somatorio) #envia os valores para o cliente
+                    sock.sendto(envio_somatorio, addr)
     
         except socket.error:
             print(f"Recebido dado nao numerico: {data}")

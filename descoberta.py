@@ -14,12 +14,6 @@ def descoberta_server(SERVIDOR_PORTA):
     #servidor ouvindo
     sock.bind(('0.0.0.0', SERVIDOR_PORTA))
 
-    while True:
-        message, addr = sock.recvfrom(1024)
-        if (message == b"discover"):
-            sock.sendto(b"ack_discover", addr)
-            break
-
     return sock
 
 def descoberta_cliente(CLIENTE_PORTA):
