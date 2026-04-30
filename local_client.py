@@ -23,7 +23,7 @@ def processamento_server(sock, num_reqs, somatorio):
             elif len(message) == 12:
                 id_req, data = struct.unpack('!iQ', message)
             
-                if(ip_client in tabela_1 and tabela_1[ip_client]['last_req'] == id_req): #DUPLICADA
+                if(addr in tabela_1 and tabela_1[ip_client]['last_req'] == id_req): #DUPLICADA
                     date = dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                     print(f"{date} client {addr} DUP!! id_req {id_req} value {data} num_reqs {num_reqs} total_sum {somatorio}")
                     envio_somatorio = tabela_1[ip_client]['last_sum']
@@ -31,7 +31,7 @@ def processamento_server(sock, num_reqs, somatorio):
                     sock.sendto(struct.pack('!iiQ', id_req, num_reqs, envio_somatorio), addr)
 
                 else:
-                    if (ip_client not in  tabela_1) : #CASO IP NAO ESTEJA NA TABELA
+                    if (addr not in  tabela_1) : #CASO IP NAO ESTEJA NA TABELA
                         tabela_1[ip_client] = {
                             'address': ip_client,
                             'last_req': None,

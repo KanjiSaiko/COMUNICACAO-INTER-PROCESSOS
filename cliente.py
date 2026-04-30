@@ -4,7 +4,7 @@ import processamento as pss
 import descoberta as dsc
 
 def main():
-    req = 0
+    date = dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     if len(sys.argv) > 1: 
         CLIENTE_PORTA = int(sys.argv[1]) #pega o primeiro argumento da linha de comando
     else:
@@ -15,10 +15,9 @@ def main():
     sock, CLIENTE_IP = dsc.descoberta_cliente(CLIENTE_PORTA)
 
 
-    date = dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     print(f"{date} server addr {CLIENTE_IP}")
 
-    pss.processamento_cliente(sock, CLIENTE_IP, CLIENTE_PORTA, date)
+    pss.processamento_cliente(sock, CLIENTE_IP, CLIENTE_PORTA)
 
 
 if __name__ == "__main__":

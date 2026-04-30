@@ -23,7 +23,7 @@ def main():
     print(f"{date} num_reqs {num_reqs} total_sum {somatorio}")
 
     #processa requisicoes
-    pss.processamento_server(sock_client, num_reqs, somatorio, date)      
+    pss.processamento_server(sock_client, num_reqs, somatorio)      
 
 
 if __name__ == "__main__":
