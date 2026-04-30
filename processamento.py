@@ -2,8 +2,9 @@ import socket
 import struct
 import interface
 import threading
+import datetime as dt
 
-def processamento_server(sock, num_reqs, somatorio, date):
+def processamento_server(sock, num_reqs, somatorio):
     #estrutura: {'address' : address, 'last_req': id_req, 'last_num_reqs' : last_num_reqs, 'last_sum': somatorio}
     tabela_1 = {} 
     tabela_2 = {'num_reqs' : 0, 'total_sum' : 0}
@@ -23,6 +24,7 @@ def processamento_server(sock, num_reqs, somatorio, date):
                 id_req, data = struct.unpack('!iQ', message)
             
                 if(ip_client in tabela_1 and tabela_1[ip_client]['last_req'] == id_req): #DUPLICADA
+                    date = dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
                     print(f"{date} client {addr} DUP!! id_req {id_req} value {data} num_reqs {num_reqs} total_sum {somatorio}")
                     envio_somatorio = tabela_1[ip_client]['last_sum']
                     
@@ -47,7 +49,7 @@ def processamento_server(sock, num_reqs, somatorio, date):
 
                     tabela_2 = {'num_reqs' : num_reqs, 'total_sum' : somatorio}
 
-                    interface.interface_server(date, ip_client, id_req, data, tabela_2)
+                    interface.interface_server(ip_client, id_req, data, tabela_2)
 
                     envio_somatorio = struct.pack('!iiQ', id_req, num_reqs, somatorio) #envia os valores para o cliente
                     sock.sendto(envio_somatorio, addr)
@@ -89,7 +91,7 @@ def processamento_cliente(sock, CLIENTE_IP, CLIENTE_PORTA, date):
 
 
 
-def ouvinte_servidor(sock, estado_atual, date, evento):
+def ouvinte_servidor(sock, estado_atual, evento):
     while(True):
             #aguarda confirmacao
             data, addr = sock.recvfrom(1024) #recebe os dados
@@ -98,5 +100,5 @@ def ouvinte_servidor(sock, estado_atual, date, evento):
  
             #Lê do estado compartilhado para saber o que a thread principal está esperando
             if (estado_atual['req_esperado'] == id_req):
-                interface.interface_cliente(date, ip_server, id_req, estado_atual['numero_enviado'], num_reqs, somatorio)
+                interface.interface_cliente(ip_server, id_req, estado_atual['numero_enviado'], num_reqs, somatorio)
                 evento.set() #acende flag avisando que ACK da req chegou

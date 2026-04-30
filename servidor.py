@@ -8,7 +8,7 @@ def main():
     #estrutura de dados da soma agregada mantida pelo servidor
     num_reqs = 0 #numero de requiscoes totais
     somatorio = 0
-    date = dt.datetime.now()
+    date = dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
     if len(sys.argv) > 1: 
         SERVIDOR_PORTA = int(sys.argv[1]) #pega o primeiro argumento da linha de comando
@@ -20,7 +20,7 @@ def main():
     #criacao do socket
     sock_client = dsc.descoberta_server(SERVIDOR_PORTA)
 
-    print(f"{date.strftime('%Y-%m-%d %H:%M:%S')} num_reqs {num_reqs} total_sum {somatorio}")
+    print(f"{date} num_reqs {num_reqs} total_sum {somatorio}")
 
     #processa requisicoes
     pss.processamento_server(sock_client, num_reqs, somatorio, date)      

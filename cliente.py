@@ -15,8 +15,8 @@ def main():
     sock, CLIENTE_IP = dsc.descoberta_cliente(CLIENTE_PORTA)
 
 
-    date = dt.datetime.now()
-    print(f"{date.strftime('%Y-%m-%d %H:%M:%S')} server addr {CLIENTE_IP}")
+    date = dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    print(f"{date} server addr {CLIENTE_IP}")
 
     pss.processamento_cliente(sock, CLIENTE_IP, CLIENTE_PORTA, date)
 
