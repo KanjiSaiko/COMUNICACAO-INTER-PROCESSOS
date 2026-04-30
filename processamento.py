@@ -2,6 +2,7 @@ import socket
 import struct
 import interface
 import threading
+import sys
 import datetime as dt
 import time
 
@@ -25,7 +26,7 @@ def processamento_server(sock, num_reqs, somatorio):
             
                 if(addr in tabela_1 and tabela_1[addr]['last_req'] == id_req): #DUPLICADA
                     date = dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    print(f"{date} client {addr} DUP!! id_req {id_req} value {data} num_reqs {num_reqs} total_sum {somatorio}")
+                    print(f"{date} client {ip_client} DUP!! id_req {id_req} value {data} num_reqs {num_reqs} total_sum {somatorio}")
 
                     envio_somatorio = tabela_1[addr]['last_sum']
                     envio_num_reqs = tabela_1[addr]['last_num_reqs']
@@ -83,7 +84,11 @@ def processamento_cliente(sock, CLIENTE_IP, CLIENTE_PORTA):
     thread_ouvinte.start()
 
     while(True):
-        numero = int(input())
+        try:
+            numero = int(input())
+        except:
+            print("\nEncerrando o cliente...")
+            sys.exit(0) # Sai de forma limpa e sem erros vermelhos
         req += 1
 
         estado_atual['req_esperado'] = req
