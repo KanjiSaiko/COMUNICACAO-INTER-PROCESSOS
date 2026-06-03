@@ -5,25 +5,28 @@ import descoberta as dsc
 
 def main():
 
-    #estrutura de dados da soma agregada mantida pelo servidor
     num_reqs = 0 #numero de requiscoes totais
     somatorio = 0
     date = dt.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-    if len(sys.argv) > 1: 
+    if len(sys.argv) > 2: 
         SERVIDOR_PORTA = int(sys.argv[1]) #pega o primeiro argumento da linha de comando
+        ID_NUM = int(sys.argv[2]) #segundo argumento sendo o id numerico para o algoritmo valentao
     
     else:
-        print("Nenhuma porta fornecida")
+        print("Nenhuma porta ou ID fornecido")
         sys.exit()
     
     #criacao do socket
     sock_client = dsc.descoberta_server(SERVIDOR_PORTA)
 
+    #comunicacao servidor-servidor
+    dsc.servidor_servidor(sock_client, ID_NUM, SERVIDOR_PORTA)
+
     print(f"{date} num_reqs {num_reqs} total_sum {somatorio}")
 
     #processa requisicoes
-    pss.processamento_server(sock_client, num_reqs, somatorio)      
+    pss.processamento_server(sock_client, num_reqs, somatorio, ID_NUM)      
 
 
 if __name__ == "__main__":

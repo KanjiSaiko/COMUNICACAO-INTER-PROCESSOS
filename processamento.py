@@ -6,20 +6,46 @@ import sys
 import datetime as dt
 import time
 
-def processamento_server(sock, num_reqs, somatorio):
+
+def processamento_server(sock, num_reqs, somatorio, ID_NUM):
     #estrutura: {'address' : address, 'last_req': id_req, 'last_num_reqs' : last_num_reqs, 'last_sum': somatorio}
     tabela_1 = {} 
     tabela_2 = {'num_reqs' : 0, 'total_sum' : 0}
+
+    lista_servidores = {} # Dicionario para guardar quem sao os outros servidores: {ID: (IP, Porta)}
+
+    is_primary = (ID_NUM == 3) #Se for 3, e lider. Se for outro, e backup
     while (True):
         try:
             message, addr = sock.recvfrom(1024)
             ip_client = addr[0]
 
-            # É um cliente novo pedindo descoberta? (Checa se é a string de 8 bytes)
+            #Cliente em descoberta
             if message == b"discover":
                 sock.sendto(b"ack_discover", addr)
                 continue # Volta para o topo do loop para escutar a próxima mensagem
 
+            #Servidor Novo fazendo descoberta
+            elif len(message) == 7:
+                prefixo, id_recebido = struct.unpack('!3si', message)
+                if prefixo == b"SRV" and id_recebido != ID_NUM: # Ignora o próprio eco do broadcast
+                    lista_servidores[id_recebido] = addr
+                    print(f"Novo servidor descoberto! ID: {id_recebido} em {addr}")
+                    
+                    # Responde diretamente (unicast) para ele saber que nós existimos
+                    msg_ack_srv = struct.pack('!4si', b"ASRV", ID_NUM) 
+                    sock.sendto(msg_ack_srv, addr)
+                continue
+
+            #Resposta de um Servidor Antigo para o broadcast
+            elif len(message) == 8:
+                prefixo, id_recebido = struct.unpack('!4si', message)
+                if prefixo == b"ASRV" and id_recebido != ID_NUM:
+                    lista_servidores[id_recebido] = addr
+                    print(f"Servidor veterano ID {id_recebido} confirmou presenca em {addr}")
+                continue
+
+            #Requisicao de dados do cliente
             elif len(message) == 12:
                 id_req, data = struct.unpack('!iQ', message)
                 # Verifica se o cliente existe e se o pacote é <= ao último processado (Pacotes velhos/Duplicatas)
@@ -35,10 +61,10 @@ def processamento_server(sock, num_reqs, somatorio):
                         
                         sock.sendto(struct.pack('!iiQ', envio_id, envio_num_reqs, envio_somatorio), addr)
 
-                    else:
+                    else: #pacote fantasma -> descartado
                         pass
 
-                else:
+                else: #pacote novo
                     if (addr not in  tabela_1) : #CASO IP NAO ESTEJA NA TABELA
                         tabela_1[addr] = {
                             'address': ip_client,
@@ -58,8 +84,10 @@ def processamento_server(sock, num_reqs, somatorio):
 
                     interface.interface_server(ip_client, id_req, data, tabela_2)
 
-                    envio_somatorio = struct.pack('!iiQ', id_req, num_reqs, somatorio) #envia os valores para o cliente
+                    envio_somatorio = struct.pack('!iiQ', id_req, num_reqs, somatorio) #envia ack com os valores para o cliente
                     sock.sendto(envio_somatorio, addr)
+            else:
+                print("Backup nao processa requisicoes")
     
         except socket.error:
             print(f"Recebido dado nao numerico: {data}")
