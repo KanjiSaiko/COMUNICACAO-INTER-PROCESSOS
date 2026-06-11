@@ -80,6 +80,17 @@ def processamento_server(sock, num_reqs, somatorio, ID_NUM):
                     else: #pacote fantasma -> descartado
                         pass
 
+                #Mensagem de ATUALIZACAO do Primario (20 bytes = !4siiQ)
+                elif len(message) == 20:
+                    prefixo, id_lider, reqs_sync, soma_sync = struct.unpack('!4siiQ', message)
+
+                    if prefixo == b"UPDT" and not estado_srv['is_primary']:
+                        # O Backup recebe a ordem do líder e atualiza suas próprias variáveis
+                        num_reqs = reqs_sync
+                        somatorio = soma_sync
+                        print(f"[REPLICAÇÃO] Sincronizado pelo Líder {id_lider}: Reqs={num_reqs}, Soma={somatorio}")
+                    continue
+
                 else: #pacote novo
                     if (addr not in  tabela_1) : #CASO IP NAO ESTEJA NA TABELA
                         tabela_1[addr] = {
@@ -102,6 +113,11 @@ def processamento_server(sock, num_reqs, somatorio, ID_NUM):
 
                     envio_somatorio = struct.pack('!iiQ', id_req, num_reqs, somatorio) #envia ack com os valores para o cliente
                     sock.sendto(envio_somatorio, addr)
+
+                    if estado_srv['is_primary']:
+                        msg_update = struct.pack('!4siiQ', b"UPDT", ID_NUM, num_reqs, somatorio)
+                        for id_bkp, addr_bkp in lista_servidores.items():
+                            sock.sendto(msg_update, addr_bkp)
             else:
                 print("Backup nao processa requisicoes")
     
