@@ -14,7 +14,18 @@ def processamento_server(sock, num_reqs, somatorio, ID_NUM):
 
     lista_servidores = {} # Dicionario para guardar quem sao os outros servidores: {ID: (IP, Porta)}
 
-    is_primary = (ID_NUM == 3) #Se for 3, e lider. Se for outro, e backup
+    # ESTADO COMPARTILHADO ENTRE THREADS
+    estado_srv = {
+        'is_primary': (ID_NUM == 3), # Provisório até fazermos a eleição real
+        'ultimo_heartbeat': time.time() # Relógio interno inicial
+    }
+
+    # Inicia as threads de tolerância a falhas
+    t_beat = threading.Thread(target=thread_envia_heartbeat, args=(sock, ID_NUM, lista_servidores, estado_srv), daemon=True)
+    t_mon = threading.Thread(target=thread_monitora_falha, args=(estado_srv,), daemon=True)
+    t_beat.start()
+    t_mon.start()
+    
     while (True):
         try:
             message, addr = sock.recvfrom(1024)
@@ -43,6 +54,11 @@ def processamento_server(sock, num_reqs, somatorio, ID_NUM):
                 if prefixo == b"ASRV" and id_recebido != ID_NUM:
                     lista_servidores[id_recebido] = addr
                     print(f"Servidor veterano ID {id_recebido} confirmou presenca em {addr}")
+                
+                elif prefixo == b"BEAT":
+                    if not estado_srv['is_primary']:
+                        # Zera o cronômetro do backup! O líder está vivo.
+                        estado_srv['ultimo_heartbeat'] = time.time()
                 continue
 
             #Requisicao de dados do cliente
@@ -141,3 +157,37 @@ def ouvinte_servidor(sock, estado_atual, evento):
             if (estado_atual['req_esperado'] == id_req):
                 interface.interface_cliente(ip_server, id_req, estado_atual['numero_enviado'], num_reqs, somatorio)
                 evento.set() #acende flag avisando que ACK da req chegou
+
+
+def thread_envia_heartbeat(sock, ID_NUM, lista_servidores, estado_srv):
+    # Pacote BEAT (8 bytes: 4 da string + 4 do int ID)
+    msg_beat = struct.pack('!4si', b"BEAT", ID_NUM) 
+    
+    while True:
+        if estado_srv['is_primary']:
+            # Se eu sou o lider, mando meu batimento para todos da lista
+            for id_backup, addr in lista_servidores.items():
+                sock.sendto(msg_beat, addr)
+        
+        time.sleep(2) # Dorme por 2 segundos antes de bater de novo
+
+
+def thread_monitora_falha(estado_srv):
+    TIMEOUT_FALHA = 5.0 # Segundos de tolerância
+    
+    while True:
+        if not estado_srv['is_primary']:
+            # Se eu sou backup, verifico ha quanto tempo nao ouco o lider
+            tempo_sem_sinal = time.time() - estado_srv['ultimo_heartbeat']
+            
+            if tempo_sem_sinal > TIMEOUT_FALHA:
+                print("\n[ALERTA] LIDER DECLARADO MORTO! TIMEOUT ESTOUROU.")
+                print("[ALERTA] INICIANDO ALGORITMO DO VALENTÃO...\n")
+                
+                # Reseta o timer temporariamente para nao floodar o terminal 
+                # enquanto a eleição da Fase 3 acontece
+                estado_srv['ultimo_heartbeat'] = time.time() 
+                
+        time.sleep(1) # Checa o cronometro a cada 1 segundo
+
+                
