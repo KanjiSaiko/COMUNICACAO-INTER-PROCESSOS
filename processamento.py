@@ -22,7 +22,7 @@ def processamento_server(sock, num_reqs, somatorio, ID_NUM):
 
     # Inicia as threads de tolerância a falhas
     t_beat = threading.Thread(target=thread_envia_heartbeat, args=(sock, ID_NUM, lista_servidores, estado_srv), daemon=True)
-    t_mon = threading.Thread(target=thread_monitora_falha, args=(estado_srv,), daemon=True)
+    t_mon = threading.Thread(target=thread_monitora_falha, args=(sock, ID_NUM, lista_servidores, estado_srv), daemon=True)
     t_beat.start()
     t_mon.start()
     
@@ -48,17 +48,44 @@ def processamento_server(sock, num_reqs, somatorio, ID_NUM):
                     sock.sendto(msg_ack_srv, addr)
                 continue
 
-            #Resposta de um Servidor Antigo para o broadcast
+            #Tratamento de todas as mensagens de Controle (8 bytes = !4si)
             elif len(message) == 8:
                 prefixo, id_recebido = struct.unpack('!4si', message)
+                
                 if prefixo == b"ASRV" and id_recebido != ID_NUM:
                     lista_servidores[id_recebido] = addr
-                    print(f"Servidor veterano ID {id_recebido} confirmou presenca em {addr}")
+                    print(f"Servidor veterano ID {id_recebido} confirmou presenca.")
                 
                 elif prefixo == b"BEAT":
                     if not estado_srv['is_primary']:
-                        # Zera o cronômetro do backup! O líder está vivo.
-                        estado_srv['ultimo_heartbeat'] = time.time()
+                        estado_srv['ultimo_heartbeat'] = time.time() # Reseta o relógio
+                
+                # --- NOVAS MENSAGENS DO VALENTAO ---
+                
+                elif prefixo == b"ELEC":
+                    print(f"Recebi aviso de ELEICAO do ID {id_recebido}.")
+                    # Se meu ID é MAIOR que o coitado que chamou a eleição:
+                    if ID_NUM > id_recebido:
+                        # 1. Mando ele ficar quieto (ANSR)
+                        msg_ansr = struct.pack('!4si', b"ANSR", ID_NUM)
+                        sock.sendto(msg_ansr, addr)
+                        
+                        # 2. O PULO DO GATO: Como eu sei que o líder morreu, 
+                        # eu forço o MEU próprio cronômetro a estourar agora!
+                        # Isso fará a minha thread de monitoramento iniciar a MINHA eleição.
+                        estado_srv['ultimo_heartbeat'] = 0 
+                
+                elif prefixo == b"ANSR":
+                    print(f"Servidor MAIOR (ID {id_recebido}) mandou eu calar a boca.")
+                    # Acende a flag que avisa a thread que perdemos
+                    estado_srv['recebeu_ansr'] = True 
+                
+                elif prefixo == b"COOR":
+                    print(f">>> NOVO LIDER ASSUMIU: ID {id_recebido} <<<")
+                    estado_srv['is_primary'] = False
+                    estado_srv['em_eleicao'] = False
+                    estado_srv['ultimo_heartbeat'] = time.time()
+                        
                 continue
 
             #Requisicao de dados do cliente
@@ -188,22 +215,58 @@ def thread_envia_heartbeat(sock, ID_NUM, lista_servidores, estado_srv):
         time.sleep(2) # Dorme por 2 segundos antes de bater de novo
 
 
-def thread_monitora_falha(estado_srv):
-    TIMEOUT_FALHA = 5.0 # Segundos de tolerância
+def thread_monitora_falha(sock, ID_NUM, lista_servidores, estado_srv):
+    TIMEOUT_FALHA = 5.0   # Segundos sem ouvir o lider para considerar que ele morreu
+    TIMEOUT_ELEICAO = 2.0 # Segundos esperando um "Cala a boca" (ANSR) de alguem maior
     
     while True:
-        if not estado_srv['is_primary']:
-            # Se eu sou backup, verifico ha quanto tempo nao ouco o lider
+        # Só faz algo se for backup e nao estiver no meio de uma eleicao
+        if not estado_srv['is_primary'] and not estado_srv.get('em_eleicao', False):
             tempo_sem_sinal = time.time() - estado_srv['ultimo_heartbeat']
             
             if tempo_sem_sinal > TIMEOUT_FALHA:
                 print("\n[ALERTA] LIDER DECLARADO MORTO! TIMEOUT ESTOUROU.")
-                print("[ALERTA] INICIANDO ALGORITMO DO VALENTÃO...\n")
+                print(f"[VALENTÃO] Servidor {ID_NUM} iniciando eleição...\n")
                 
-                # Reseta o timer temporariamente para nao floodar o terminal 
-                # enquanto a eleição da Fase 3 acontece
-                estado_srv['ultimo_heartbeat'] = time.time() 
+                estado_srv['em_eleicao'] = True
+                estado_srv['recebeu_ansr'] = False # Flag que diz se tomamos um "cala a boca"
                 
-        time.sleep(1) # Checa o cronometro a cada 1 segundo
+                # Passo 1: Acha todo mundo que tem ID maior que o meu
+                maiores = {id_srv: addr for id_srv, addr in lista_servidores.items() if id_srv > ID_NUM}
+                
+                if len(maiores) == 0:
+                    # Otimização: Se eu sou o maior ID conhecido, nem perco tempo perguntando!
+                    pass 
+                else:
+                    # Dispara a mensagem de ELEIÇÃO (ELEC) para os maiores
+                    msg_elec = struct.pack('!4si', b"ELEC", ID_NUM)
+                    for addr in maiores.values():
+                        sock.sendto(msg_elec, addr)
+                
+                # Passo 2: Espera um pouquinho para ver se alguém maior responde com ANSR
+                time.sleep(TIMEOUT_ELEICAO)
+                
+                # Passo 3: O Veredito!
+                if not estado_srv['recebeu_ansr']:
+                    # VITÓRIA! Ninguém maior respondeu (ou não existiam maiores). Eu assumo.
+                    print(f"[VALENTÃO] Venci a eleição! EU SOU O NOVO PRIMÁRIO (Líder {ID_NUM})!")
+                    estado_srv['is_primary'] = True
+                    estado_srv['em_eleicao'] = False
+                    
+                    # Comunica a vitória (COOR) para todo mundo
+                    msg_coor = struct.pack('!4si', b"COOR", ID_NUM)
+                    for addr in lista_servidores.values():
+                        sock.sendto(msg_coor, addr)
+                        
+                    # (Fase 4 - Mais tarde avisaremos os clientes aqui)
+                    
+                else:
+                    # DERROTA! Alguém maior assumiu a responsabilidade.
+                    print(f"[VALENTÃO] Alguém maior respondeu. Aguardando novo líder assumir...")
+                    estado_srv['em_eleicao'] = False
+                    # Zera o heartbeat para dar tempo do novo líder assumir e mandar o BEAT
+                    estado_srv['ultimo_heartbeat'] = time.time()
+                    
+        time.sleep(1) # Checa os cronômetros a cada 1 segundo
 
                 
