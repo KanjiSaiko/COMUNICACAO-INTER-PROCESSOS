@@ -22,7 +22,7 @@ def processamento_server(sock, num_reqs, somatorio, ID_NUM):
 
     # Inicia as threads de tolerância a falhas
     t_beat = threading.Thread(target=thread_envia_heartbeat, args=(sock, ID_NUM, lista_servidores, estado_srv), daemon=True)
-    t_mon = threading.Thread(target=thread_monitora_falha, args=(sock, ID_NUM, lista_servidores, estado_srv), daemon=True)
+    t_mon = threading.Thread(target=thread_monitora_falha, args=(sock, ID_NUM, lista_servidores, estado_srv, tabela_1), daemon=True)
     t_beat.start()
     t_mon.start()
     
@@ -33,8 +33,9 @@ def processamento_server(sock, num_reqs, somatorio, ID_NUM):
 
             #Cliente em descoberta
             if message == b"discover":
-                sock.sendto(b"ack_discover", addr)
-                continue # Volta para o topo do loop para escutar a próxima mensagem
+                if estado_srv['is_primary']: # SÓ O LÍDER RESPONDE!
+                    sock.sendto(b"ack_discover", addr)
+                continue
 
             #Servidor Novo fazendo descoberta
             elif len(message) == 7:
@@ -159,6 +160,13 @@ def processamento_cliente(sock, CLIENTE_IP, CLIENTE_PORTA):
 
     estado_atual = {'req_esperado': 0, 'numero_enviado': 0} #estrutura mutável compartilhada
 
+    # Adicionamos o 'endereco_servidor' no estado compartilhado!
+    estado_atual = {
+        'req_esperado': 0, 
+        'numero_enviado': 0,
+        'endereco_servidor': (CLIENTE_IP, CLIENTE_PORTA) 
+    }
+
     thread_ouvinte = threading.Thread(
         target=ouvinte_servidor, 
         args=(sock, estado_atual, evento),
@@ -171,15 +179,15 @@ def processamento_cliente(sock, CLIENTE_IP, CLIENTE_PORTA):
         except:
             print("\nEncerrando o cliente...")
             sys.exit(0) # Sai de forma limpa e sem erros vermelhos
-        req += 1
 
+        req += 1
         estado_atual['req_esperado'] = req
         estado_atual['numero_enviado'] = numero
-
         mensagem = struct.pack('!iQ', req, numero)
+
         while(True):
             evento.clear() #garante/apaga flag ACK
-            sock.sendto(mensagem, (CLIENTE_IP, CLIENTE_PORTA)) #envia numero    
+            sock.sendto(mensagem, estado_atual['endereco_servidor'])   
         
             if evento.wait(0.2):
                 break #Sucesso
@@ -190,16 +198,25 @@ def processamento_cliente(sock, CLIENTE_IP, CLIENTE_PORTA):
 
 
 def ouvinte_servidor(sock, estado_atual, evento):
-    while(True):
-            #aguarda confirmacao
-            data, addr = sock.recvfrom(1024) #recebe os dados
+    while True:
+        data, addr = sock.recvfrom(1024) 
+        
+        # 1. É o ACK normal do servidor? (12 bytes)
+        if len(data) == 12:
             ip_server = addr[0]
-            id_req, num_reqs, somatorio = struct.unpack('!iiQ', data) #desempacota
- 
-            #Lê do estado compartilhado para saber o que a thread principal está esperando
-            if (estado_atual['req_esperado'] == id_req):
+            id_req, num_reqs, somatorio = struct.unpack('!iiQ', data) 
+            
+            if estado_atual['req_esperado'] == id_req:
                 interface.interface_cliente(ip_server, id_req, estado_atual['numero_enviado'], num_reqs, somatorio)
-                evento.set() #acende flag avisando que ACK da req chegou
+                evento.set() 
+                
+        # 2. FASE 4: É o aviso de mudança de Líder? (8 bytes)
+        elif len(data) == 8:
+            prefixo, id_novo = struct.unpack('!4si', data)
+            if prefixo == b"NLDR":
+                # O PULO DO GATO: Muda o endereço de destino na memória!
+                estado_atual['endereco_servidor'] = addr
+                print(f"\n[SISTEMA] Conexão redirecionada! O Servidor Líder agora é o ID {id_novo} ({addr[0]}).")
 
 
 def thread_envia_heartbeat(sock, ID_NUM, lista_servidores, estado_srv):
@@ -215,7 +232,7 @@ def thread_envia_heartbeat(sock, ID_NUM, lista_servidores, estado_srv):
         time.sleep(2) # Dorme por 2 segundos antes de bater de novo
 
 
-def thread_monitora_falha(sock, ID_NUM, lista_servidores, estado_srv):
+def thread_monitora_falha(sock, ID_NUM, lista_servidores, estado_srv, tabela_1):
     TIMEOUT_FALHA = 5.0   # Segundos sem ouvir o lider para considerar que ele morreu
     TIMEOUT_ELEICAO = 2.0 # Segundos esperando um "Cala a boca" (ANSR) de alguem maior
     
@@ -258,7 +275,11 @@ def thread_monitora_falha(sock, ID_NUM, lista_servidores, estado_srv):
                     for addr in lista_servidores.values():
                         sock.sendto(msg_coor, addr)
                         
-                    # (Fase 4 - Mais tarde avisaremos os clientes aqui)
+                    # FASE 4: Avisa todos os clientes conhecidos na tabela_1!
+                    msg_nldr = struct.pack('!4si', b"NLDR", ID_NUM)
+                    for addr_cliente in tabela_1.keys():
+                        sock.sendto(msg_nldr, addr_cliente)
+                    print(f"[VALENTÃO] {len(tabela_1)} clientes notificados da mudança.")
                     
                 else:
                     # DERROTA! Alguém maior assumiu a responsabilidade.
