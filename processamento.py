@@ -109,14 +109,32 @@ def processamento_server(sock, num_reqs, somatorio, ID_NUM):
                         pass
 
                 #Mensagem de ATUALIZACAO do Primario (20 bytes = !4siiQ)
-                elif len(message) == 20:
-                    prefixo, id_lider, reqs_sync, soma_sync = struct.unpack('!4siiQ', message)
-
+                elif len(message) == 26:
+                    prefixo, id_lider, reqs_sync, soma_sync, req_sync, port_sync, ip_bytes = struct.unpack('!4siiQiH4s', message)
+                    
                     if prefixo == b"UPDT" and not estado_srv['is_primary']:
-                        # O Backup recebe a ordem do líder e atualiza suas próprias variáveis
+                        # Reverte os 4 bytes para string IP normal
+                        ip_sync = socket.inet_ntoa(ip_bytes)
+                        addr_sync = (ip_sync, port_sync)
+                        
+                        # Sincroniza as variáveis globais
                         num_reqs = reqs_sync
                         somatorio = soma_sync
-                        print(f"[REPLICAÇÃO] Sincronizado pelo Líder {id_lider}: Reqs={num_reqs}, Soma={somatorio}")
+                        
+                        # Sincroniza o cliente na tabela_1 do Backup!
+                        if addr_sync not in tabela_1:
+                            tabela_1[addr_sync] = {
+                                'address': ip_sync,
+                                'last_req': None,
+                                'last_num_reqs': 0,
+                                'last_sum': 0
+                            }
+                        
+                        tabela_1[addr_sync]['last_req'] = req_sync
+                        tabela_1[addr_sync]['last_num_reqs'] = reqs_sync
+                        tabela_1[addr_sync]['last_sum'] = soma_sync
+                        
+                        print(f"[REPLICAÇÃO] Cliente {addr_sync} sincronizado. Soma={somatorio}")
                     continue
 
                 else: #pacote novo
@@ -142,9 +160,16 @@ def processamento_server(sock, num_reqs, somatorio, ID_NUM):
                     envio_somatorio = struct.pack('!iiQ', id_req, num_reqs, somatorio) #envia ack com os valores para o cliente
                     sock.sendto(envio_somatorio, addr)
 
+                    # REPLICAÇÃO PASSIVA: O Primário propaga o novo estado E o cliente para os Backups
                     if estado_srv['is_primary']:
-                        msg_update = struct.pack('!4siiQ', b"UPDT", ID_NUM, num_reqs, somatorio)
-                        for id_bkp, addr_bkp in lista_servidores.items():
+                        # Converte IP string (ex: '192.168.0.10') para 4 bytes binários
+                        ip_bytes = socket.inet_aton(ip_client)
+                        porta_cliente = addr[1]
+                        
+                        # Novo formato: !4s i i Q i H 4s (Tamanho total: 26 bytes)
+                        msg_update = struct.pack('!4siiQiH4s', b"UPDT", ID_NUM, num_reqs, somatorio, id_req, porta_cliente, ip_bytes)
+                        
+                        for addr_bkp in lista_servidores.values():
                             sock.sendto(msg_update, addr_bkp)
             else:
                 print("Backup nao processa requisicoes")
@@ -199,24 +224,35 @@ def processamento_cliente(sock, CLIENTE_IP, CLIENTE_PORTA):
 
 def ouvinte_servidor(sock, estado_atual, evento):
     while True:
-        data, addr = sock.recvfrom(1024) 
-        
-        # 1. É o ACK normal do servidor? (12 bytes)
-        if len(data) == 12:
+        try:
+            # Aguarda qualquer pacote chegar
+            data, addr = sock.recvfrom(1024) 
             ip_server = addr[0]
-            id_req, num_reqs, somatorio = struct.unpack('!iiQ', data) 
+
+            # 1. É o ACK matemático normal do servidor? (Deve ter exatos 16 bytes)
+            if len(data) == 16:
+                id_req, num_reqs, somatorio = struct.unpack('!iiQ', data) 
+     
+                # Lê do estado compartilhado para saber o que a thread principal está esperando
+                if estado_atual['req_esperado'] == id_req:
+                    interface.interface_cliente(ip_server, id_req, estado_atual['numero_enviado'], num_reqs, somatorio)
+                    evento.set() # Acende flag avisando que ACK da req chegou
+
+            # 2. FASE 4: É o aviso de mudança de Líder? (Deve ter exatos 8 bytes)
+            elif len(data) == 8:
+                prefixo, id_novo = struct.unpack('!4si', data)
+                if prefixo == b"NLDR":
+                    # Muda o endereço de destino na memória para os próximos envios!
+                    estado_atual['endereco_servidor'] = addr
+                    print(f"\n[SISTEMA] Conexão redirecionada! O Servidor Líder agora é o ID {id_novo} ({addr[0]}).")
             
-            if estado_atual['req_esperado'] == id_req:
-                interface.interface_cliente(ip_server, id_req, estado_atual['numero_enviado'], num_reqs, somatorio)
-                evento.set() 
+            # 3. Pacote ignorado (como o b"ack_discover" desgarrado de 12 bytes)
+            else:
+                pass 
                 
-        # 2. FASE 4: É o aviso de mudança de Líder? (8 bytes)
-        elif len(data) == 8:
-            prefixo, id_novo = struct.unpack('!4si', data)
-            if prefixo == b"NLDR":
-                # O PULO DO GATO: Muda o endereço de destino na memória!
-                estado_atual['endereco_servidor'] = addr
-                print(f"\n[SISTEMA] Conexão redirecionada! O Servidor Líder agora é o ID {id_novo} ({addr[0]}).")
+        except struct.error:
+            # Se ainda assim cair algum lixo com o mesmo tamanho mas formato inválido, ignora
+            pass
 
 
 def thread_envia_heartbeat(sock, ID_NUM, lista_servidores, estado_srv):
