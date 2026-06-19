@@ -20,14 +20,15 @@ def main():
     #criacao do socket
     sock_client = dsc.descoberta_server(SERVIDOR_PORTA)
 
-    #comunicacao servidor-servidor
-    dsc.servidor_servidor(sock_client, ID_NUM, SERVIDOR_PORTA)
+    #comunicacao servidor-servidor + bootstrap de eleicao inicial
+    lista_servidores_inicial = {}
+    sou_primario = dsc.servidor_servidor(sock_client, ID_NUM, SERVIDOR_PORTA, lista_servidores_inicial)
 
     print(f"{date} num_reqs {num_reqs} total_sum {somatorio}")
 
     #processa requisicoes
-    pss.processamento_server(sock_client, num_reqs, somatorio, ID_NUM)      
+    pss.processamento_server(sock_client, num_reqs, somatorio, ID_NUM, sou_primario, lista_servidores_inicial)
 
 
 if __name__ == "__main__":
-    main()  
+    main()
