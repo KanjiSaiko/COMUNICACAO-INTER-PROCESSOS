@@ -98,6 +98,16 @@ def descoberta_server(SERVIDOR_PORTA):
         print('Erro ao criar socket listen')
         sys.exit()
 
+    # Aumenta o buffer de recepção do SO para reduzir o risco de descarte
+    # silencioso de pacotes (incluindo BEAT/COOR/NLDR, que são críticos para
+    # o failover) quando o servidor está sob carga alta de requisições e o
+    # processamento (com print por requisição) não consegue esvaziar a fila
+    # tão rápido quanto os pacotes chegam.
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 8 * 1024 * 1024)  # 8 MB
+    except OSError:
+        pass  # Alguns SOs limitam o valor máximo; segue com o default se falhar
+
     #servidor ouvindo
     sock.bind(('0.0.0.0', SERVIDOR_PORTA))
 
