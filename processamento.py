@@ -220,6 +220,11 @@ def processamento_server(sock, num_reqs, somatorio, ID_NUM, sou_primario, lista_
             else:
                 print("Pacote de tamanho desconhecido descartado.")
 
+        except ConnectionResetError:
+            # Ignora o aviso do Windows de que o pacote foi enviado a um IP morto
+            continue
+        # --------------------------------------
+
         except OSError as e:
             # Socket encerrado (ex: processo sendo encerrado) -> termina o loop
             print(f"Socket encerrado, finalizando processamento: {e}")
@@ -366,7 +371,8 @@ def processamento_cliente(sock, CLIENTE_IP, CLIENTE_PORTA):
     estado_atual = {
         'req_esperado': 0,
         'numero_enviado': 0,
-        'endereco_servidor': (CLIENTE_IP, CLIENTE_PORTA)
+        'endereco_servidor': (CLIENTE_IP, CLIENTE_PORTA),
+        'ack_recebido': False  # <--- NOVA FLAG: Evita prints duplicados
     }
 
     thread_ouvinte = threading.Thread(
@@ -385,13 +391,14 @@ def processamento_cliente(sock, CLIENTE_IP, CLIENTE_PORTA):
         req += 1
         estado_atual['req_esperado'] = req
         estado_atual['numero_enviado'] = numero
+        estado_atual['ack_recebido'] = False # <--- RESETA A FLAG PARA A NOVA REQ
         mensagem = struct.pack('!iQ', req, numero)
 
         while (True):
             evento.clear()  # garante/apaga flag ACK
             sock.sendto(mensagem, estado_atual['endereco_servidor'])
 
-            if evento.wait(0.2):
+            if evento.wait(1):
                 break  # Sucesso
             else:
                 print("Timeout")  # Falha, loop repete
@@ -409,9 +416,10 @@ def ouvinte_servidor(sock, estado_atual, evento):
                 id_req, num_reqs, somatorio = struct.unpack('!iiQ', data)
 
                 # Lê do estado compartilhado para saber o que a thread principal está esperando
-                if estado_atual['req_esperado'] == id_req:
+                if estado_atual['req_esperado'] == id_req and not estado_atual['ack_recebido']:
+                    estado_atual['ack_recebido'] = True # <--- MARCA COMO RECEBIDO
                     interface.interface_cliente(ip_server, id_req, estado_atual['numero_enviado'], num_reqs, somatorio)
-                    evento.set()  # Acende flag avisando que ACK da req chegou
+                    evento.set()
 
             # 2. FASE 4: É o aviso de mudança de Líder? (Deve ter exatos 8 bytes)
             elif len(data) == 8:
@@ -427,6 +435,9 @@ def ouvinte_servidor(sock, estado_atual, evento):
 
         except struct.error:
             # Se ainda assim cair algum lixo com o mesmo tamanho mas formato inválido, ignora
+            pass
+        except ConnectionResetError:
+            # O Windows cospe isso se mandarmos mensagem pro Lider morto. Apenas ignora.
             pass
 
 
@@ -457,10 +468,17 @@ def thread_reanuncia_srv(sock, ID_NUM):
     while True:
         time.sleep(INTERVALO_REANUNCIO)
         try:
-            sock.sendto(msg_srv, ('255.255.255.255', porta))
-        except OSError:
-            # Socket foi fechado (processo encerrando) -> encerra a thread
+            sock.sendto(msg_srv, ('192.168.0.255', porta))
+        except ConnectionResetError:
+            # Ignora o aviso do Windows de que o pacote foi enviado a um IP morto
+            continue
+        except OSError as e:
+            # Socket encerrado (ex: processo sendo encerrado) -> termina o loop
+            print(f"Socket encerrado, finalizando processamento: {e}")
             return
+        except struct.error as e:
+            print(f"Pacote malformado descartado: {e}")
+            continue
 
 
 def thread_envia_heartbeat(sock, ID_NUM, lista_servidores, estado_srv):

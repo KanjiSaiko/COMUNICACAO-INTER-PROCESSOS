@@ -25,7 +25,7 @@ def servidor_servidor(sock, ID_NUM, SERVIDOR_PORTA, lista_servidores):
     #Empacota a mensagem b"SRV" (3 bytes) + o ID numérico (4 bytes)
     msg_desc_srv = struct.pack('!3si', b"SRV", ID_NUM)
     # Dispara para a rede.
-    sock.sendto(msg_desc_srv, ('255.255.255.255', SERVIDOR_PORTA))
+    sock.sendto(msg_desc_srv, ('192.168.0.255', SERVIDOR_PORTA))
     print(f"Buscando outros servidores na rede...")
 
     # Janela de bootstrap: escuta por respostas ASRV (ou até mesmo SRV de
@@ -43,7 +43,7 @@ def servidor_servidor(sock, ID_NUM, SERVIDOR_PORTA, lista_servidores):
             message, addr = sock.recvfrom(1024)
         except socket.timeout:
             if time.time() >= proxima_retransmissao:
-                sock.sendto(msg_desc_srv, ('255.255.255.255', SERVIDOR_PORTA))
+                sock.sendto(msg_desc_srv, ('192.168.0.255', SERVIDOR_PORTA))
                 proxima_retransmissao = time.time() + INTERVALO_RETRANSMISSAO
             continue
 
@@ -114,30 +114,46 @@ def descoberta_server(SERVIDOR_PORTA):
     return sock
 
 def descoberta_cliente(CLIENTE_PORTA):
-    #criacao do socket
+    # criacao do socket
     try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)#udp
-            
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM) # udp
     except socket.error:
         print('Erro ao criar socket listen')
         sys.exit()
 
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1) #ativa broadcast
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1) # ativa broadcast
 
-    # Retransmite o "discover" até obter resposta do líder. Isso evita que
-    # o cliente trave para sempre caso o pacote se perca, ou caso a rede
-    # ainda esteja em processo de eleição quando o cliente sobe.
     TIMEOUT_DISCOVER = 1.0
     sock.settimeout(TIMEOUT_DISCOVER)
 
     while True:
-        sock.sendto(b"discover", ('255.255.255.255', CLIENTE_PORTA))
-        try:
-            CLIENTE_IP = sock.recvfrom(1024)[1][0]
+        sock.sendto(b"discover", ('192.168.0.255', CLIENTE_PORTA))
+        
+        # Cria uma sub-janela de escuta para filtrar lixo e loopbacks
+        tempo_inicio = time.time()
+        achou_lider = False
+        
+        while time.time() - tempo_inicio < TIMEOUT_DISCOVER:
+            try:
+                data, addr = sock.recvfrom(1024)
+                
+                # SÓ aceita se a resposta for o ACK genuíno do Primário
+                if data == b"ack_discover":
+                    CLIENTE_IP = addr[0]
+                    achou_lider = True
+                    break
+                
+                # Se for o próprio b"discover" espelhado pelo SO ou pacote SRV solto, ignora!
+                else:
+                    pass 
+                    
+            except socket.timeout:
+                break # O tempo limite estourou. Sai do laço interno para mandar outro broadcast.
+
+        if achou_lider:
             break
-        except socket.timeout:
+        else:
             print("Nenhum líder respondeu ainda, tentando novamente...")
-            continue
 
     sock.settimeout(None) # volta ao modo bloqueante para o resto da execução
     return sock, CLIENTE_IP
