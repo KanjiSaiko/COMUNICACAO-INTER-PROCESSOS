@@ -468,7 +468,7 @@ def thread_reanuncia_srv(sock, ID_NUM):
     while True:
         time.sleep(INTERVALO_REANUNCIO)
         try:
-            sock.sendto(msg_srv, ('192.168.0.255', porta))
+            sock.sendto(msg_srv, ('255.255.255.255', porta))
         except ConnectionResetError:
             # Ignora o aviso do Windows de que o pacote foi enviado a um IP morto
             continue
