@@ -94,6 +94,28 @@ def processamento_server(sock, num_reqs, somatorio, ID_NUM, sou_primario, lista_
                         # Reseta o relógio para dar tempo do novo primário se
                         # estabelecer e começar a mandar BEAT.
                         estado_srv['ultimo_heartbeat'] = time.time()
+
+                        # CRÍTICO: notifica os clientes sobre o novo primário.
+                        # Sem isso, os clientes continuam mandando requisições
+                        # para este servidor (que agora é backup e ignora tudo),
+                        # ficando em timeout infinito.
+                        # O endereço do novo líder é o `addr` de onde veio o SRV.
+                        # NLDR agora carrega o IP e porta do novo líder
+                        # embutidos no pacote (formato !4si4sH = 14 bytes),
+                        # para que o cliente saiba para onde redirecionar
+                        # independente de quem enviou o pacote NLDR.
+                        # addr = (ip_novo_lider, porta) — endereço de onde
+                        # chegou o SRV do novo líder.
+                        ip_lider_bytes = socket.inet_aton(addr[0])
+                        porta_lider = addr[1]
+                        msg_nldr = struct.pack('!4si4sH', b"NLDR", id_recebido,
+                                               ip_lider_bytes, porta_lider)
+                        for _ in range(3):  # rajada para compensar perda de pacote UDP
+                            for addr_cliente in list(tabela_1.keys()):
+                                _sendto_seguro(sock, msg_nldr, addr_cliente)
+                            time.sleep(0.05)
+                        print(f"[VALENTÃO] {len(tabela_1)} clientes redirecionados "
+                              f"para o novo líder ID {id_recebido} em {addr[0]}.")
                 continue
 
             #Tratamento de todas as mensagens de Controle (8 bytes = !4si)
@@ -220,13 +242,18 @@ def processamento_server(sock, num_reqs, somatorio, ID_NUM, sou_primario, lista_
             else:
                 print("Pacote de tamanho desconhecido descartado.")
 
-        except ConnectionResetError:
-            # Ignora o aviso do Windows de que o pacote foi enviado a um IP morto
-            continue
-        # --------------------------------------
-
         except OSError as e:
-            # Socket encerrado (ex: processo sendo encerrado) -> termina o loop
+            # No Windows, enviar um pacote UDP para uma porta que ainda não
+            # está aberta no destino gera WinError 10054 (WSAECONNRESET —
+            # "ICMP Port Unreachable" traduzido pelo Winsock). Isso é benigno
+            # em UDP: o pacote simplesmente não chegou, e o próximo ciclo do
+            # loop tentará de novo normalmente. NÃO encerramos o processo.
+            # O errno 10054 é específico do Windows; no Linux esse caso
+            # nunca gera exceção (o kernel descarta silenciosamente).
+            if getattr(e, 'errno', None) == 10054 or getattr(e, 'winerror', None) == 10054:
+                continue  # Ignora e continua o loop normalmente
+            # Qualquer outro OSError (ex: errno 9 = EBADF, socket fechado
+            # intencionalmente pelo encerramento do processo) encerra o loop.
             print(f"Socket encerrado, finalizando processamento: {e}")
             return
         except struct.error as e:
@@ -371,8 +398,7 @@ def processamento_cliente(sock, CLIENTE_IP, CLIENTE_PORTA):
     estado_atual = {
         'req_esperado': 0,
         'numero_enviado': 0,
-        'endereco_servidor': (CLIENTE_IP, CLIENTE_PORTA),
-        'ack_recebido': False  # <--- NOVA FLAG: Evita prints duplicados
+        'endereco_servidor': (CLIENTE_IP, CLIENTE_PORTA)
     }
 
     thread_ouvinte = threading.Thread(
@@ -391,14 +417,13 @@ def processamento_cliente(sock, CLIENTE_IP, CLIENTE_PORTA):
         req += 1
         estado_atual['req_esperado'] = req
         estado_atual['numero_enviado'] = numero
-        estado_atual['ack_recebido'] = False # <--- RESETA A FLAG PARA A NOVA REQ
         mensagem = struct.pack('!iQ', req, numero)
 
         while (True):
             evento.clear()  # garante/apaga flag ACK
             sock.sendto(mensagem, estado_atual['endereco_servidor'])
 
-            if evento.wait(1):
+            if evento.wait(0.2):
                 break  # Sucesso
             else:
                 print("Timeout")  # Falha, loop repete
@@ -416,18 +441,29 @@ def ouvinte_servidor(sock, estado_atual, evento):
                 id_req, num_reqs, somatorio = struct.unpack('!iiQ', data)
 
                 # Lê do estado compartilhado para saber o que a thread principal está esperando
-                if estado_atual['req_esperado'] == id_req and not estado_atual['ack_recebido']:
-                    estado_atual['ack_recebido'] = True # <--- MARCA COMO RECEBIDO
+                if estado_atual['req_esperado'] == id_req:
                     interface.interface_cliente(ip_server, id_req, estado_atual['numero_enviado'], num_reqs, somatorio)
-                    evento.set()
+                    evento.set()  # Acende flag avisando que ACK da req chegou
 
-            # 2. FASE 4: É o aviso de mudança de Líder? (Deve ter exatos 8 bytes)
-            elif len(data) == 8:
-                prefixo, id_novo = struct.unpack('!4si', data)
+            # 2. Aviso de mudança de Líder — NLDR com endereço embutido
+            # Formato novo: !4si4sH = 14 bytes (prefixo + id + ip + porta)
+            # O endereço do novo líder vem DENTRO do pacote, não do addr
+            # de origem, para que o redirecionamento seja correto mesmo
+            # quando quem manda o NLDR não é o novo líder (ex: abdicação).
+            elif len(data) == 14:
+                prefixo, id_novo, ip_bytes, porta_lider = struct.unpack('!4si4sH', data)
                 if prefixo == b"NLDR":
-                    # Muda o endereço de destino na memória para os próximos envios!
-                    estado_atual['endereco_servidor'] = addr
-                    print(f"\n[SISTEMA] Conexão redirecionada! O Servidor Líder agora é o ID {id_novo} ({addr[0]}).")
+                    ip_lider = socket.inet_ntoa(ip_bytes)
+                    # Se o IP embutido for 0.0.0.0, o servidor usou bind em
+                    # 0.0.0.0 e não sabia seu próprio IP real; nesse caso
+                    # usamos o addr de origem do pacote (que já é o correto,
+                    # pois o próprio novo líder enviou o NLDR).
+                    if ip_lider == '0.0.0.0':
+                        ip_lider = addr[0]
+                        porta_lider = addr[1]
+                    estado_atual['endereco_servidor'] = (ip_lider, porta_lider)
+                    print(f"\n[SISTEMA] Conexão redirecionada! "
+                          f"O Servidor Líder agora é o ID {id_novo} ({ip_lider}).")
 
             # 3. Pacote ignorado (como o b"ack_discover" desgarrado, ou um UACK de 13 bytes desgarrado)
             else:
@@ -435,9 +471,6 @@ def ouvinte_servidor(sock, estado_atual, evento):
 
         except struct.error:
             # Se ainda assim cair algum lixo com o mesmo tamanho mas formato inválido, ignora
-            pass
-        except ConnectionResetError:
-            # O Windows cospe isso se mandarmos mensagem pro Lider morto. Apenas ignora.
             pass
 
 
@@ -469,16 +502,10 @@ def thread_reanuncia_srv(sock, ID_NUM):
         time.sleep(INTERVALO_REANUNCIO)
         try:
             sock.sendto(msg_srv, ('255.255.255.255', porta))
-        except ConnectionResetError:
-            # Ignora o aviso do Windows de que o pacote foi enviado a um IP morto
-            continue
         except OSError as e:
-            # Socket encerrado (ex: processo sendo encerrado) -> termina o loop
-            print(f"Socket encerrado, finalizando processamento: {e}")
-            return
-        except struct.error as e:
-            print(f"Pacote malformado descartado: {e}")
-            continue
+            if getattr(e, 'errno', None) == 10054 or getattr(e, 'winerror', None) == 10054:
+                continue  # benigno no Windows, tenta de novo no próximo ciclo
+            return  # socket fechado -> encerra a thread
 
 
 def thread_envia_heartbeat(sock, ID_NUM, lista_servidores, estado_srv):
@@ -495,11 +522,34 @@ def thread_envia_heartbeat(sock, ID_NUM, lista_servidores, estado_srv):
             for id_backup, addr in list(lista_servidores.items()):
                 try:
                     sock.sendto(msg_beat, addr)
-                except OSError:
-                    # Socket foi fechado (processo encerrando) -> encerra a thread
+                except OSError as e:
+                    # WinError 10054: ICMP port unreachable (benigno em UDP)
+                    if getattr(e, 'errno', None) == 10054 or getattr(e, 'winerror', None) == 10054:
+                        continue
+                    # Qualquer outro OSError significa socket fechado
                     return
 
         time.sleep(2)  # Dorme por 2 segundos antes de bater de novo
+
+
+
+def _sendto_seguro(sock, msg, addr):
+    """
+    Wrapper para sock.sendto que ignora WinError 10054 (WSAECONNRESET),
+    que no Windows indica que o destino UDP não tinha um socket aberto
+    naquele momento (ICMP Port Unreachable). Em UDP isso é benigno —
+    o pacote simplesmente não chegou, sem consequências para o socket
+    local. No Linux esse caso nunca gera exceção.
+    Retorna True se o envio foi aceito pelo SO, False se foi 10054,
+    e propaga qualquer outro OSError (socket realmente fechado).
+    """
+    try:
+        sock.sendto(msg, addr)
+        return True
+    except OSError as e:
+        if getattr(e, 'errno', None) == 10054 or getattr(e, 'winerror', None) == 10054:
+            return False  # benigno, destino não estava pronto
+        raise  # socket fechado ou outro erro real
 
 
 def thread_monitora_falha(sock, ID_NUM, lista_servidores, estado_srv, tabela_1):
@@ -531,7 +581,7 @@ def thread_monitora_falha(sock, ID_NUM, lista_servidores, estado_srv, tabela_1):
                         # Dispara a mensagem de ELEIÇÃO (ELEC) para os maiores
                         msg_elec = struct.pack('!4si', b"ELEC", ID_NUM)
                         for addr in maiores.values():
-                            sock.sendto(msg_elec, addr)
+                            _sendto_seguro(sock, msg_elec, addr)
 
                     # Passo 2: Espera um pouquinho para ver se alguém maior responde com ANSR
                     time.sleep(TIMEOUT_ELEICAO)
@@ -549,16 +599,30 @@ def thread_monitora_falha(sock, ID_NUM, lista_servidores, estado_srv, tabela_1):
                         msg_coor = struct.pack('!4si', b"COOR", ID_NUM)
                         for _ in range(3):
                             for addr in list(lista_servidores.values()):
-                                sock.sendto(msg_coor, addr)
+                                _sendto_seguro(sock, msg_coor, addr)
                             time.sleep(0.1)
 
                         # FASE 4: Avisa todos os clientes conhecidos na tabela_1!
                         # Também em rajada: se o cliente perder esse pacote, ele
                         # fica preso em timeout tentando falar com o líder morto.
-                        msg_nldr = struct.pack('!4si', b"NLDR", ID_NUM)
+                        # Como sou eu o novo líder, uso meu próprio endereço.
+                        try:
+                            meu_ip, minha_porta = sock.getsockname()
+                            # bind em 0.0.0.0 não informa o IP real; nesse caso
+                            # os clientes usarão o addr de origem do pacote NLDR,
+                            # que já é o correto (meu IP real visto pela rede).
+                            if meu_ip == '0.0.0.0':
+                                meu_ip_bytes = socket.inet_aton('0.0.0.0')
+                            else:
+                                meu_ip_bytes = socket.inet_aton(meu_ip)
+                        except OSError:
+                            meu_ip_bytes = socket.inet_aton('0.0.0.0')
+                            minha_porta = 0
+                        msg_nldr = struct.pack('!4si4sH', b"NLDR", ID_NUM,
+                                               meu_ip_bytes, minha_porta)
                         for _ in range(3):
                             for addr_cliente in list(tabela_1.keys()):
-                                sock.sendto(msg_nldr, addr_cliente)
+                                _sendto_seguro(sock, msg_nldr, addr_cliente)
                             time.sleep(0.1)
                         print(f"[VALENTÃO] {len(tabela_1)} clientes notificados da mudança.")
 
